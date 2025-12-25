@@ -189,9 +189,25 @@ def create_default_excel():
 
 def get_excel_file():
     """Excel dosyasını açar, yoksa oluşturur"""
+    # Google Sheets kullanılıyorsa Excel dosyasına gerek yok
+    if USE_GOOGLE_SHEETS:
+        # Yine de fallback için varsayılan Excel oluştur
+        if not os.path.exists(EXCEL_FILE):
+            return create_default_excel()
+    
     if not os.path.exists(EXCEL_FILE):
         return create_default_excel()
-    return load_workbook(EXCEL_FILE)
+    
+    try:
+        return load_workbook(EXCEL_FILE)
+    except Exception as e:
+        # Dosya bozuksa yeniden oluştur
+        _log("E", "excel_handler.py:get_excel_file", "Excel file corrupted, recreating", {"error": str(e)})
+        try:
+            os.remove(EXCEL_FILE)
+        except:
+            pass
+        return create_default_excel()
 
 def load_vehicles():
     """Vehicles sheet'inden araç listesini okur"""
@@ -406,43 +422,50 @@ def add_user(username, password, full_name, is_admin_user=False):
     wb.save(EXCEL_FILE)
 
 def update_excel_with_admin_column():
-    """Mevcut Excel dosyasına Admin kolonu ekler ve admin kullanıcısını ekler"""
-    wb = get_excel_file()
-    ws = wb["Users"]
+    """Mevcut Excel dosyasına Admin kolonu ekler ve admin kullanıcısını ekler
+    Google Sheets kullanılıyorsa bu fonksiyon hiçbir şey yapmaz (Google Sheets'te manuel yapılmalı)
+    """
+    # Google Sheets kullanılıyorsa Excel işlemlerini atla
+    if USE_GOOGLE_SHEETS:
+        _log("D", "excel_handler.py:update_excel_with_admin_column", "Google Sheets enabled, skipping Excel update", {})
+        return
     
-    # Başlık satırını kontrol et
-    headers = [cell.value for cell in ws[1]]
-    
-    # Admin kolonu yoksa ekle
-    if "Admin" not in headers:
-        # #region agent log
-        _log("D", "excel_handler.py:update_excel_with_admin_column", "Adding Admin column to headers", {"current_headers": headers})
-        # #endregion agent log
-        ws.cell(row=1, column=len(headers) + 1, value="Admin")
-        headers.append("Admin")
+    try:
+        wb = get_excel_file()
+        ws = wb["Users"]
         
-        # Mevcut kullanıcılara "No" ekle
-        for row_idx in range(2, ws.max_row + 1):
-            ws.cell(row=row_idx, column=len(headers), value="No")
-    
-    # Admin kullanıcısı var mı kontrol et
-    admin_exists = False
-    for row in ws.iter_rows(min_row=2, values_only=True):
-        if row and row[0] == "admin":
-            admin_exists = True
-            break
-    
-    # Admin kullanıcısı yoksa ekle
-    if not admin_exists:
-        # #region agent log
-        _log("D", "excel_handler.py:update_excel_with_admin_column", "Adding admin user", {})
-        # #endregion agent log
-        ws.append(["admin", "admin123", "Admin User", "Yes"])
-    
-    wb.save(EXCEL_FILE)
-    # #region agent log
-    _log("D", "excel_handler.py:update_excel_with_admin_column", "Excel updated successfully", {})
-    # #endregion agent log
+        # Başlık satırını kontrol et
+        headers = [cell.value for cell in ws[1]]
+        
+        # Admin kolonu yoksa ekle
+        if "Admin" not in headers:
+            _log("D", "excel_handler.py:update_excel_with_admin_column", "Adding Admin column to headers", {"current_headers": headers})
+            ws.cell(row=1, column=len(headers) + 1, value="Admin")
+            headers.append("Admin")
+            
+            # Mevcut kullanıcılara "No" ekle
+            for row_idx in range(2, ws.max_row + 1):
+                ws.cell(row=row_idx, column=len(headers), value="No")
+        
+        # Admin kullanıcısı var mı kontrol et
+        admin_exists = False
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            if row and row[0] == "admin":
+                admin_exists = True
+                break
+        
+        # Admin kullanıcısı yoksa ekle
+        if not admin_exists:
+            _log("D", "excel_handler.py:update_excel_with_admin_column", "Adding admin user", {})
+            ws.append(["admin", "admin123", "Admin User", "Yes"])
+        
+        wb.save(EXCEL_FILE)
+        _log("D", "excel_handler.py:update_excel_with_admin_column", "Excel updated successfully", {})
+    except Exception as e:
+        # Excel dosyası bozuksa veya oluşturulamazsa hata verme, sadece log
+        _log("E", "excel_handler.py:update_excel_with_admin_column", "Failed to update Excel file", {"error": str(e)})
+        # Bulut ortamında Excel dosyası olmayabilir, bu normal
+        pass
 
 # Form gönderimleri için ayrı Excel dosyası - bulut ortamında geçici dizin
 SUBMISSIONS_FILE = os.path.join(TEMP_DIR, "form_submissions.xlsx")

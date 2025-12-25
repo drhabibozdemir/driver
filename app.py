@@ -9,8 +9,13 @@ from excel_handler import (
     load_form_submissions, is_admin, update_excel_with_admin_column
 )
 
-# Uygulama başlangıcında Excel dosyasını güncelle
-update_excel_with_admin_column()
+# Uygulama başlangıcında Excel dosyasını güncelle (sadece Excel kullanılıyorsa)
+# Google Sheets kullanılıyorsa bu fonksiyon hiçbir şey yapmaz
+try:
+    update_excel_with_admin_column()
+except Exception as e:
+    # Bulut ortamında Excel dosyası olmayabilir, bu normal
+    pass
 
 # Sayfa yapılandırması
 st.set_page_config(
