@@ -33,22 +33,9 @@ if 'current_page' not in st.session_state:
 
 def login_page():
     """Login sayfası"""
-    import json
-    import os
-    LOG_PATH = r"c:\Users\Akdeniz\Documents\python_play_zone\memo_the_driver\.cursor\debug.log"
+    # Logging bulut ortamında devre dışı
     def _log(hypothesis_id, location, message, data):
-        try:
-            with open(LOG_PATH, "a", encoding="utf-8") as f:
-                f.write(json.dumps({
-                    "sessionId": "debug-session",
-                    "runId": "run1",
-                    "hypothesisId": hypothesis_id,
-                    "location": location,
-                    "message": message,
-                    "data": data,
-                    "timestamp": __import__("time").time() * 1000
-                }) + "\n")
-        except: pass
+        pass
     
     st.title("🔐 Giriş Yap")
     

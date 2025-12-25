@@ -2,20 +2,73 @@
 Excel dosyası işlemleri için yardımcı modül
 Form verilerini Excel'den okur ve günceller
 Google Sheets desteği eklendi
+Bulut ortamı için optimize edildi
 """
 import os
 import json
 from openpyxl import Workbook, load_workbook
 from openpyxl.utils import get_column_letter
 
+# Streamlit secrets desteği (bulut ortamı için)
+try:
+    import streamlit as st
+    HAS_STREAMLIT = True
+except ImportError:
+    HAS_STREAMLIT = False
+
+def get_secret(key, default=""):
+    """Streamlit secrets veya environment variable'dan değer okur"""
+    if HAS_STREAMLIT:
+        try:
+            # Streamlit secrets'tan oku
+            secrets = st.secrets
+            if hasattr(secrets, key):
+                return getattr(secrets, key)
+            # Nested secrets için (örn: secrets.google_sheets.sheet_id)
+            if "." in key:
+                parts = key.split(".")
+                value = secrets
+                for part in parts:
+                    if hasattr(value, part):
+                        value = getattr(value, part)
+                    else:
+                        return default
+                return value
+        except Exception:
+            pass
+    # Fallback: environment variable
+    return os.environ.get(key, default)
+
 # Google Sheets desteği (opsiyonel)
-USE_GOOGLE_SHEETS = os.environ.get("USE_GOOGLE_SHEETS", "false").lower() == "true"
-GOOGLE_SHEET_ID = os.environ.get("GOOGLE_SHEET_ID", "")
-GOOGLE_CREDENTIALS_JSON = os.environ.get("GOOGLE_CREDENTIALS_JSON", "")
+# Streamlit secrets'tan oku (nested veya flat format)
+if HAS_STREAMLIT:
+    try:
+        secrets = st.secrets
+        # Nested format kontrolü
+        if hasattr(secrets, "google_sheets"):
+            gs_config = secrets.google_sheets
+            USE_GOOGLE_SHEETS = str(gs_config.get("enabled", "false")).lower() == "true"
+            GOOGLE_SHEET_ID = str(gs_config.get("sheet_id", ""))
+            GOOGLE_CREDENTIALS_JSON = str(gs_config.get("credentials_json", ""))
+        else:
+            # Flat format
+            USE_GOOGLE_SHEETS = get_secret("USE_GOOGLE_SHEETS", "false").lower() == "true"
+            GOOGLE_SHEET_ID = get_secret("GOOGLE_SHEET_ID", "")
+            GOOGLE_CREDENTIALS_JSON = get_secret("GOOGLE_CREDENTIALS_JSON", "")
+    except Exception:
+        # Fallback to environment variables
+        USE_GOOGLE_SHEETS = get_secret("USE_GOOGLE_SHEETS", "false").lower() == "true"
+        GOOGLE_SHEET_ID = get_secret("GOOGLE_SHEET_ID", "")
+        GOOGLE_CREDENTIALS_JSON = get_secret("GOOGLE_CREDENTIALS_JSON", "")
+else:
+    # Environment variables only
+    USE_GOOGLE_SHEETS = get_secret("USE_GOOGLE_SHEETS", "false").lower() == "true"
+    GOOGLE_SHEET_ID = get_secret("GOOGLE_SHEET_ID", "")
+    GOOGLE_CREDENTIALS_JSON = get_secret("GOOGLE_CREDENTIALS_JSON", "")
 
 # Google Apps Script URL (eski yöntem)
-GOOGLE_APPS_SCRIPT_URL = os.environ.get("GOOGLE_APPS_SCRIPT_URL", "https://script.google.com/macros/s/AKfycbwtLKzCB366hwi1S4cHAUGIWP9dDA6isSDLbKvyOIw9P9WNgbLF6t6dlY7RYWlvQM96/exec")
-USE_GOOGLE_APPS_SCRIPT = os.environ.get("USE_GOOGLE_APPS_SCRIPT", "true").lower() == "true"
+GOOGLE_APPS_SCRIPT_URL = get_secret("GOOGLE_APPS_SCRIPT_URL", "https://script.google.com/macros/s/AKfycbwtLKzCB366hwi1S4cHAUGIWP9dDA6isSDLbKvyOIw9P9WNgbLF6t6dlY7RYWlvQM96/exec")
+USE_GOOGLE_APPS_SCRIPT = get_secret("USE_GOOGLE_APPS_SCRIPT", "true").lower() == "true"
 
 if USE_GOOGLE_SHEETS:
     try:
@@ -24,25 +77,46 @@ if USE_GOOGLE_SHEETS:
     except ImportError:
         USE_GOOGLE_SHEETS = False
 
-# #region agent log
-LOG_PATH = r"c:\Users\Akdeniz\Documents\python_play_zone\memo_the_driver\.cursor\debug.log"
-def _log(hypothesis_id, location, message, data):
+def get_google_sheets_client():
+    """Google Sheets client'ı oluşturur ve döndürür"""
+    if not USE_GOOGLE_SHEETS:
+        return None
+    
     try:
-        with open(LOG_PATH, "a", encoding="utf-8") as f:
-            f.write(json.dumps({
-                "sessionId": "debug-session",
-                "runId": "run1",
-                "hypothesisId": hypothesis_id,
-                "location": location,
-                "message": message,
-                "data": data,
-                "timestamp": __import__("time").time() * 1000
-            }) + "\n")
-    except: pass
-# #endregion agent log
+        if not GOOGLE_CREDENTIALS_JSON or not GOOGLE_SHEET_ID:
+            return None
+        
+        # JSON string'ini parse et
+        import json as json_module
+        if isinstance(GOOGLE_CREDENTIALS_JSON, str):
+            creds_dict = json_module.loads(GOOGLE_CREDENTIALS_JSON)
+        else:
+            creds_dict = GOOGLE_CREDENTIALS_JSON
+        
+        # Credentials oluştur
+        creds = Credentials.from_service_account_info(
+            creds_dict,
+            scopes=['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
+        )
+        
+        # Client oluştur
+        client = gspread.authorize(creds)
+        return client
+    except Exception as e:
+        _log("ERROR", "excel_handler.py:get_google_sheets_client", "Failed to create Google Sheets client", {"error": str(e)})
+        return None
 
-# Excel dosyası yolu - script'in çalıştığı dizinde
-EXCEL_FILE = os.path.join(os.path.dirname(__file__), "form_data.xlsx")
+# Logging - bulut ortamında devre dışı (opsiyonel olarak Streamlit logging kullanılabilir)
+def _log(hypothesis_id, location, message, data):
+    # Bulut ortamında logging devre dışı
+    # Gerekirse Streamlit'in kendi logging sistemini kullanabilirsiniz
+    pass
+
+# Excel dosyası yolu - bulut ortamında geçici dizin kullan
+# Google Sheets kullanılıyorsa Excel dosyası kullanılmayacak
+import tempfile
+TEMP_DIR = tempfile.gettempdir()
+EXCEL_FILE = os.path.join(TEMP_DIR, "form_data.xlsx")
 
 def create_default_excel():
     """Default değerlerle Excel dosyası oluşturur"""
@@ -121,6 +195,22 @@ def get_excel_file():
 
 def load_vehicles():
     """Vehicles sheet'inden araç listesini okur"""
+    # Google Sheets'ten oku
+    if USE_GOOGLE_SHEETS:
+        client = get_google_sheets_client()
+        if client:
+            try:
+                sheet = client.open_by_key(GOOGLE_SHEET_ID).worksheet("Vehicles")
+                all_values = sheet.get_all_values()
+                vehicles = []
+                for row in all_values[1:]:  # İlk satır başlık
+                    if row and row[0]:
+                        vehicles.append(row[0])
+                return vehicles
+            except Exception as e:
+                _log("E", "excel_handler.py:load_vehicles:google_sheets", "Google Sheets load failed, falling back to Excel", {"error": str(e)})
+    
+    # Excel'den oku (fallback)
     wb = get_excel_file()
     ws = wb["Vehicles"]
     vehicles = []
@@ -131,6 +221,22 @@ def load_vehicles():
 
 def load_fuel_levels():
     """FuelLevels sheet'inden yakıt seviyelerini okur"""
+    # Google Sheets'ten oku
+    if USE_GOOGLE_SHEETS:
+        client = get_google_sheets_client()
+        if client:
+            try:
+                sheet = client.open_by_key(GOOGLE_SHEET_ID).worksheet("FuelLevels")
+                all_values = sheet.get_all_values()
+                levels = []
+                for row in all_values[1:]:  # İlk satır başlık
+                    if row and row[0]:
+                        levels.append(row[0])
+                return levels
+            except Exception as e:
+                _log("E", "excel_handler.py:load_fuel_levels:google_sheets", "Google Sheets load failed, falling back to Excel", {"error": str(e)})
+    
+    # Excel'den oku (fallback)
     wb = get_excel_file()
     ws = wb["FuelLevels"]
     levels = []
@@ -143,6 +249,22 @@ def load_check_fields(category):
     """İlgili sheet'ten kontrolleri okur
     category: 'ExteriorChecks', 'EngineChecks', 'SafetyEquipment', 'InteriorChecks'
     """
+    # Google Sheets'ten oku
+    if USE_GOOGLE_SHEETS:
+        client = get_google_sheets_client()
+        if client:
+            try:
+                sheet = client.open_by_key(GOOGLE_SHEET_ID).worksheet(category)
+                all_values = sheet.get_all_values()
+                fields = []
+                for row in all_values[1:]:  # İlk satır başlık
+                    if row and row[0]:
+                        fields.append(row[0])
+                return fields
+            except Exception as e:
+                _log("E", f"excel_handler.py:load_check_fields:google_sheets:{category}", "Google Sheets load failed, falling back to Excel", {"error": str(e)})
+    
+    # Excel'den oku (fallback)
     wb = get_excel_file()
     if category not in wb.sheetnames:
         return []
@@ -155,6 +277,22 @@ def load_check_fields(category):
 
 def load_items():
     """Items sheet'inden eşya listesini okur"""
+    # Google Sheets'ten oku
+    if USE_GOOGLE_SHEETS:
+        client = get_google_sheets_client()
+        if client:
+            try:
+                sheet = client.open_by_key(GOOGLE_SHEET_ID).worksheet("Items")
+                all_values = sheet.get_all_values()
+                items = []
+                for row in all_values[1:]:  # İlk satır başlık
+                    if row and row[0]:
+                        items.append(row[0])
+                return items
+            except Exception as e:
+                _log("E", "excel_handler.py:load_items:google_sheets", "Google Sheets load failed, falling back to Excel", {"error": str(e)})
+    
+    # Excel'den oku (fallback)
     wb = get_excel_file()
     ws = wb["Items"]
     items = []
@@ -165,36 +303,56 @@ def load_items():
 
 def load_users():
     """Users sheet'inden kullanıcıları okur"""
-    # #region agent log
     _log("A", "excel_handler.py:load_users:entry", "load_users called", {})
-    # #endregion agent log
+    
+    # Google Sheets'ten oku
+    if USE_GOOGLE_SHEETS:
+        client = get_google_sheets_client()
+        if client:
+            try:
+                sheet = client.open_by_key(GOOGLE_SHEET_ID).worksheet("Users")
+                all_values = sheet.get_all_values()
+                
+                if not all_values or len(all_values) < 2:
+                    return {}
+                
+                headers = all_values[0]
+                _log("A", "excel_handler.py:load_users:headers", "Users sheet headers", {"headers": headers})
+                
+                users = {}
+                for row in all_values[1:]:  # İlk satır başlık
+                    if row and len(row) >= 3 and row[0] and row[1] and row[2]:
+                        users[row[0]] = {
+                            "password": row[1],
+                            "full_name": row[2]
+                        }
+                        _log("A", "excel_handler.py:load_users:user_added", "User added to dict", {"username": row[0]})
+                
+                _log("A", "excel_handler.py:load_users:exit", "load_users returning", {"user_count": len(users), "usernames": list(users.keys())})
+                return users
+            except Exception as e:
+                _log("E", "excel_handler.py:load_users:google_sheets", "Google Sheets load failed, falling back to Excel", {"error": str(e)})
+    
+    # Excel'den oku (fallback)
     wb = get_excel_file()
     ws = wb["Users"]
     
-    # #region agent log
     headers = [cell.value for cell in ws[1]]
     _log("A", "excel_handler.py:load_users:headers", "Users sheet headers", {"headers": headers})
-    # #endregion agent log
     
     users = {}
     row_num = 0
     for row in ws.iter_rows(min_row=2, values_only=True):
         row_num += 1
-        # #region agent log
         _log("A", "excel_handler.py:load_users:row", f"Processing row {row_num}", {"row": list(row), "row_length": len(row) if row else 0})
-        # #endregion agent log
         if row[0] and row[1] and row[2]:
             users[row[0]] = {
                 "password": row[1],
                 "full_name": row[2]
             }
-            # #region agent log
-            _log("A", "excel_handler.py:load_users:user_added", "User added to dict", {"username": row[0], "has_password": bool(row[1]), "has_full_name": bool(row[2])})
-            # #endregion agent log
+            _log("A", "excel_handler.py:load_users:user_added", "User added to dict", {"username": row[0]})
     
-    # #region agent log
     _log("A", "excel_handler.py:load_users:exit", "load_users returning", {"user_count": len(users), "usernames": list(users.keys())})
-    # #endregion agent log
     return users
 
 def add_vehicle(vehicle_name):
@@ -286,8 +444,8 @@ def update_excel_with_admin_column():
     _log("D", "excel_handler.py:update_excel_with_admin_column", "Excel updated successfully", {})
     # #endregion agent log
 
-# Form gönderimleri için ayrı Excel dosyası
-SUBMISSIONS_FILE = os.path.join(os.path.dirname(__file__), "form_submissions.xlsx")
+# Form gönderimleri için ayrı Excel dosyası - bulut ortamında geçici dizin
+SUBMISSIONS_FILE = os.path.join(TEMP_DIR, "form_submissions.xlsx")
 
 def _prepare_submission_row(form_data):
     """Form verilerini Excel/Sheets satırına dönüştürür"""
@@ -555,57 +713,73 @@ def load_form_submissions():
 
 def is_admin(username):
     """Kullanıcının admin olup olmadığını kontrol eder"""
-    # #region agent log
     _log("B", "excel_handler.py:is_admin:entry", "is_admin called", {"username": username})
-    # #endregion agent log
+    
+    # Google Sheets'ten oku
+    if USE_GOOGLE_SHEETS:
+        client = get_google_sheets_client()
+        if client:
+            try:
+                sheet = client.open_by_key(GOOGLE_SHEET_ID).worksheet("Users")
+                all_values = sheet.get_all_values()
+                
+                if not all_values or len(all_values) < 2:
+                    return False
+                
+                headers = all_values[0]
+                _log("B", "excel_handler.py:is_admin:headers", "Users sheet headers", {"headers": headers, "has_admin": "Admin" in headers})
+                
+                admin_col_idx = None
+                if "Admin" in headers:
+                    admin_col_idx = headers.index("Admin")
+                elif len(headers) > 3:
+                    admin_col_idx = 3
+                
+                for row in all_values[1:]:
+                    if row and row[0] == username:
+                        if admin_col_idx and len(row) > admin_col_idx:
+                            admin_value = row[admin_col_idx]
+                            is_admin_result = admin_value == "Yes" or admin_value == True
+                            _log("B", "excel_handler.py:is_admin:admin_check", "Admin value check", {"admin_value": admin_value, "is_admin": is_admin_result})
+                            return is_admin_result
+                        if username == "admin":
+                            return True
+                
+                _log("B", "excel_handler.py:is_admin:user_not_found", "User not found or not admin", {"username": username})
+                return False
+            except Exception as e:
+                _log("E", "excel_handler.py:is_admin:google_sheets", "Google Sheets load failed, falling back to Excel", {"error": str(e)})
+    
+    # Excel'den oku (fallback)
     wb = get_excel_file()
     ws = wb["Users"]
     
-    # Users sheet'inde admin kolonu var mı kontrol et
     headers = [cell.value for cell in ws[1]]
-    # #region agent log
     _log("B", "excel_handler.py:is_admin:headers", "Users sheet headers", {"headers": headers, "has_admin": "Admin" in headers})
-    # #endregion agent log
     admin_col_idx = None
     
     if "Admin" in headers:
         admin_col_idx = headers.index("Admin")
-        # #region agent log
         _log("B", "excel_handler.py:is_admin:admin_col_found", "Admin column found", {"admin_col_idx": admin_col_idx})
-        # #endregion agent log
-    elif len(headers) > 3:  # Username, Password, Full Name'den sonra Admin kolonu olabilir
+    elif len(headers) > 3:
         admin_col_idx = 3
-        # #region agent log
         _log("B", "excel_handler.py:is_admin:admin_col_assumed", "Assuming admin column at index 3", {"admin_col_idx": admin_col_idx})
-        # #endregion agent log
     
-    # Kullanıcıyı bul
     user_found = False
     for row in ws.iter_rows(min_row=2, values_only=True):
-        # #region agent log
         _log("B", "excel_handler.py:is_admin:checking_row", "Checking row", {"row_username": row[0] if row else None, "matches": row[0] == username if row else False})
-        # #endregion agent log
         if row[0] == username:
             user_found = True
-            # #region agent log
             _log("B", "excel_handler.py:is_admin:user_found", "User found in sheet", {"username": username, "row_length": len(row), "admin_col_idx": admin_col_idx})
-            # #endregion agent log
             if admin_col_idx and len(row) > admin_col_idx:
                 admin_value = row[admin_col_idx]
                 is_admin_result = admin_value == "Yes" or admin_value == True
-                # #region agent log
                 _log("B", "excel_handler.py:is_admin:admin_check", "Admin value check", {"admin_value": admin_value, "is_admin": is_admin_result})
-                # #endregion agent log
                 return is_admin_result
-            # Admin kolonu yoksa, username'e göre kontrol et
             if username == "admin":
-                # #region agent log
                 _log("B", "excel_handler.py:is_admin:fallback", "Using fallback admin check", {"username": username, "is_admin": True})
-                # #endregion agent log
                 return True
     
-    # #region agent log
     _log("B", "excel_handler.py:is_admin:user_not_found", "User not found or not admin", {"username": username, "user_found": user_found})
-    # #endregion agent log
     return False
 

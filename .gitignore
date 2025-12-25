@@ -4,26 +4,48 @@ __pycache__/
 *$py.class
 *.so
 .Python
+env/
+venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
 
-# Excel temporary files
-~$*.xlsx
-~$*.xls
+# Streamlit
+.streamlit/secrets.toml
+.streamlit/secrets.toml.local
 
-# Form submissions (contains user data)
+# Excel files (local development)
+form_data.xlsx
 form_submissions.xlsx
 
-# Environment
-venv/
-env/
-ENV/
+# Logs
+*.log
+debug.log
 
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
+*~
 
 # OS
 .DS_Store
 Thumbs.db
 
+# Temporary files
+*.tmp
+*.temp
