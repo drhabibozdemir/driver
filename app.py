@@ -288,9 +288,11 @@ def form_page():
             # Form verilerini topla
             form_data = {
                 "driver_name": driver_name,
-                "vehicle": other_vehicle if selected_vehicle == "Other" else selected_vehicle,
+                "vehicle": selected_vehicle,  # "Other" veya seçilen araç
+                "other_vehicle": other_vehicle if selected_vehicle == "Other" else "",  # "Other" seçildiyse manuel giriş
                 "odometer_start": odometer_start,
-                "fuel_level": other_fuel if fuel_level == "Other" else fuel_level,
+                "fuel_level": fuel_level,  # "Other" veya seçilen seviye
+                "other_fuel": other_fuel if fuel_level == "Other" else "",  # "Other" seçildiyse manuel giriş
                 "oil_level": oil_level,
                 "exterior_checks": exterior_checks,
                 "engine_checks": engine_checks,

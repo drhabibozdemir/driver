@@ -357,49 +357,78 @@ def _prepare_submission_row(form_data):
     return headers, row
 
 def save_form_submission_to_google_apps_script(form_data):
-    """Form verilerini Google Apps Script'e HTTP POST ile gönderir (eski yöntem)"""
+    """Form verilerini Google Apps Script'e HTTP POST ile gönderir (eski yöntem - Google Sheets formatına uygun)"""
     import urllib.request
     import urllib.parse
     import json
     
     try:
-        # Form verilerini düzleştir (Google Apps Script formatına uygun)
+        # Form verilerini Google Sheets formatına uygun şekilde düzleştir
+        # Eski HTML formundaki field isimlerini kullan
         flat_data = {}
         
-        # Temel alanlar
+        # Temel alanlar (eski formdaki isimlerle aynı)
         flat_data["driver_name"] = form_data.get("driver_name", "")
-        flat_data["vehicle"] = form_data.get("vehicle", "")
+        
+        # Vehicle - "Other" seçildiyse other_vehicle kullan
+        vehicle = form_data.get("vehicle", "")
+        if vehicle == "Other":
+            flat_data["vehicle"] = "Other"
+            flat_data["other_vehicle"] = form_data.get("other_vehicle", "")
+        else:
+            flat_data["vehicle"] = vehicle
+            flat_data["other_vehicle"] = ""
+        
         flat_data["odometer_start"] = str(form_data.get("odometer_start", ""))
-        flat_data["fuel_level"] = form_data.get("fuel_level", "")
+        
+        # Fuel level - "Other" seçildiyse other_fuel kullan
+        fuel_level = form_data.get("fuel_level", "")
+        if fuel_level == "Other":
+            flat_data["fuel_level"] = "Other"
+            flat_data["other_fuel"] = form_data.get("other_fuel", "")
+        else:
+            flat_data["fuel_level"] = fuel_level
+            flat_data["other_fuel"] = ""
+        
         flat_data["oil_level"] = form_data.get("oil_level", "")
         flat_data["fuel_card"] = form_data.get("fuel_card", "")
         flat_data["measuring_tape"] = form_data.get("measuring_tape", "")
         flat_data["safety_vest"] = form_data.get("safety_vest", "")
         flat_data["fuel_amount"] = form_data.get("fuel_amount", "")
         
-        # Exterior checks
+        # Dosya yüklemeleri (şimdilik boş, gelecekte eklenebilir)
+        flat_data["odometer_file"] = ""
+        flat_data["fuel_receipt"] = ""
+        
+        # Exterior checks - direkt field isimleri (prefix olmadan)
         exterior_checks = form_data.get("exterior_checks", {})
-        for field, value in exterior_checks.items():
-            flat_data[f"exterior_{field}"] = value
+        exterior_fields = ['headlights', 'break_lights', 'indicators', 'mirrors', 'windows', 
+                          'windshield', 'wiper_fluid', 'wipers', 'tires', 'body_paint']
+        for field in exterior_fields:
+            flat_data[field] = exterior_checks.get(field, "Needs Attention")
         
-        # Engine checks
+        # Engine checks - direkt field isimleri
         engine_checks = form_data.get("engine_checks", {})
-        for field, value in engine_checks.items():
-            flat_data[f"engine_{field}"] = value
+        engine_fields = ['engine_noise', 'coolant_level', 'brake_fluid', 'battery_condition', 'belts_hoses']
+        for field in engine_fields:
+            flat_data[field] = engine_checks.get(field, "Needs Attention")
         
-        # Safety equipment
+        # Safety equipment - direkt field isimleri
         safety_checks = form_data.get("safety_checks", {})
-        for field, value in safety_checks.items():
-            flat_data[f"safety_{field}"] = value
+        safety_fields = ['seatbelts', 'fire_extinguisher', 'first_aid_kit', 'horn', 'jumper_cables', 'snow_brush']
+        for field in safety_fields:
+            flat_data[field] = safety_checks.get(field, "Needs Attention")
         
-        # Interior checks
+        # Interior checks - direkt field isimleri
         interior_checks = form_data.get("interior_checks", {})
-        for field, value in interior_checks.items():
-            flat_data[f"interior_{field}"] = value
+        interior_fields = ['cleanliness', 'dashboard_lights', 'hvac', 'seats']
+        for field in interior_fields:
+            flat_data[field] = interior_checks.get(field, "Needs Attention")
         
-        # HTTP POST isteği gönder
+        # HTTP POST isteği gönder (multipart/form-data yerine application/x-www-form-urlencoded)
         data = urllib.parse.urlencode(flat_data).encode('utf-8')
         req = urllib.request.Request(GOOGLE_APPS_SCRIPT_URL, data=data, method='POST')
+        req.add_header('Content-Type', 'application/x-www-form-urlencoded')
         
         with urllib.request.urlopen(req, timeout=10) as response:
             result = response.read().decode('utf-8')
