@@ -1,10 +1,45 @@
 """
 Excel dosyası işlemleri için yardımcı modül
 Form verilerini Excel'den okur ve günceller
+Google Sheets desteği eklendi
 """
 import os
+import json
 from openpyxl import Workbook, load_workbook
 from openpyxl.utils import get_column_letter
+
+# Google Sheets desteği (opsiyonel)
+USE_GOOGLE_SHEETS = os.environ.get("USE_GOOGLE_SHEETS", "false").lower() == "true"
+GOOGLE_SHEET_ID = os.environ.get("GOOGLE_SHEET_ID", "")
+GOOGLE_CREDENTIALS_JSON = os.environ.get("GOOGLE_CREDENTIALS_JSON", "")
+
+# Google Apps Script URL (eski yöntem)
+GOOGLE_APPS_SCRIPT_URL = os.environ.get("GOOGLE_APPS_SCRIPT_URL", "https://script.google.com/macros/s/AKfycbwtLKzCB366hwi1S4cHAUGIWP9dDA6isSDLbKvyOIw9P9WNgbLF6t6dlY7RYWlvQM96/exec")
+USE_GOOGLE_APPS_SCRIPT = os.environ.get("USE_GOOGLE_APPS_SCRIPT", "true").lower() == "true"
+
+if USE_GOOGLE_SHEETS:
+    try:
+        import gspread
+        from google.oauth2.service_account import Credentials
+    except ImportError:
+        USE_GOOGLE_SHEETS = False
+
+# #region agent log
+LOG_PATH = r"c:\Users\Akdeniz\Documents\python_play_zone\memo_the_driver\.cursor\debug.log"
+def _log(hypothesis_id, location, message, data):
+    try:
+        with open(LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(json.dumps({
+                "sessionId": "debug-session",
+                "runId": "run1",
+                "hypothesisId": hypothesis_id,
+                "location": location,
+                "message": message,
+                "data": data,
+                "timestamp": __import__("time").time() * 1000
+            }) + "\n")
+    except: pass
+# #endregion agent log
 
 # Excel dosyası yolu - script'in çalıştığı dizinde
 EXCEL_FILE = os.path.join(os.path.dirname(__file__), "form_data.xlsx")
@@ -71,8 +106,9 @@ def create_default_excel():
     
     # Users sheet
     ws_users = wb.create_sheet("Users")
-    ws_users.append(["Username", "Password", "Full Name"])
-    ws_users.append(["innovodriver", "123456", "Mehmet Berk"])
+    ws_users.append(["Username", "Password", "Full Name", "Admin"])
+    ws_users.append(["innovodriver", "123456", "Mehmet Berk", "No"])
+    ws_users.append(["admin", "admin123", "Admin User", "Yes"])
     
     wb.save(EXCEL_FILE)
     return wb
@@ -129,15 +165,36 @@ def load_items():
 
 def load_users():
     """Users sheet'inden kullanıcıları okur"""
+    # #region agent log
+    _log("A", "excel_handler.py:load_users:entry", "load_users called", {})
+    # #endregion agent log
     wb = get_excel_file()
     ws = wb["Users"]
+    
+    # #region agent log
+    headers = [cell.value for cell in ws[1]]
+    _log("A", "excel_handler.py:load_users:headers", "Users sheet headers", {"headers": headers})
+    # #endregion agent log
+    
     users = {}
+    row_num = 0
     for row in ws.iter_rows(min_row=2, values_only=True):
+        row_num += 1
+        # #region agent log
+        _log("A", "excel_handler.py:load_users:row", f"Processing row {row_num}", {"row": list(row), "row_length": len(row) if row else 0})
+        # #endregion agent log
         if row[0] and row[1] and row[2]:
             users[row[0]] = {
                 "password": row[1],
                 "full_name": row[2]
             }
+            # #region agent log
+            _log("A", "excel_handler.py:load_users:user_added", "User added to dict", {"username": row[0], "has_password": bool(row[1]), "has_full_name": bool(row[2])})
+            # #endregion agent log
+    
+    # #region agent log
+    _log("A", "excel_handler.py:load_users:exit", "load_users returning", {"user_count": len(users), "usernames": list(users.keys())})
+    # #endregion agent log
     return users
 
 def add_vehicle(vehicle_name):
@@ -173,61 +230,95 @@ def add_item(item_name):
     ws.append([item_name])
     wb.save(EXCEL_FILE)
 
-def add_user(username, password, full_name):
+def add_user(username, password, full_name, is_admin_user=False):
     """Yeni kullanıcı ekler"""
     wb = get_excel_file()
     ws = wb["Users"]
-    ws.append([username, password, full_name])
+    
+    # Başlık satırını kontrol et ve Admin kolonu ekle
+    headers = [cell.value for cell in ws[1]]
+    if "Admin" not in headers:
+        # Admin kolonunu başlığa ekle
+        ws.cell(row=1, column=len(headers) + 1, value="Admin")
+        headers.append("Admin")
+    
+    # Yeni satır ekle
+    new_row = [username, password, full_name, "Yes" if is_admin_user else "No"]
+    ws.append(new_row)
     wb.save(EXCEL_FILE)
+
+def update_excel_with_admin_column():
+    """Mevcut Excel dosyasına Admin kolonu ekler ve admin kullanıcısını ekler"""
+    wb = get_excel_file()
+    ws = wb["Users"]
+    
+    # Başlık satırını kontrol et
+    headers = [cell.value for cell in ws[1]]
+    
+    # Admin kolonu yoksa ekle
+    if "Admin" not in headers:
+        # #region agent log
+        _log("D", "excel_handler.py:update_excel_with_admin_column", "Adding Admin column to headers", {"current_headers": headers})
+        # #endregion agent log
+        ws.cell(row=1, column=len(headers) + 1, value="Admin")
+        headers.append("Admin")
+        
+        # Mevcut kullanıcılara "No" ekle
+        for row_idx in range(2, ws.max_row + 1):
+            ws.cell(row=row_idx, column=len(headers), value="No")
+    
+    # Admin kullanıcısı var mı kontrol et
+    admin_exists = False
+    for row in ws.iter_rows(min_row=2, values_only=True):
+        if row and row[0] == "admin":
+            admin_exists = True
+            break
+    
+    # Admin kullanıcısı yoksa ekle
+    if not admin_exists:
+        # #region agent log
+        _log("D", "excel_handler.py:update_excel_with_admin_column", "Adding admin user", {})
+        # #endregion agent log
+        ws.append(["admin", "admin123", "Admin User", "Yes"])
+    
+    wb.save(EXCEL_FILE)
+    # #region agent log
+    _log("D", "excel_handler.py:update_excel_with_admin_column", "Excel updated successfully", {})
+    # #endregion agent log
 
 # Form gönderimleri için ayrı Excel dosyası
 SUBMISSIONS_FILE = os.path.join(os.path.dirname(__file__), "form_submissions.xlsx")
 
-def save_form_submission(form_data):
-    """Form verilerini ayrı bir Excel dosyasına kaydeder"""
+def _prepare_submission_row(form_data):
+    """Form verilerini Excel/Sheets satırına dönüştürür"""
     from datetime import datetime
-    from openpyxl import Workbook
     
-    # Dosya varsa aç, yoksa yeni oluştur
-    if os.path.exists(SUBMISSIONS_FILE):
-        wb = load_workbook(SUBMISSIONS_FILE)
-        if "Submissions" not in wb.sheetnames:
-            ws = wb.create_sheet("Submissions")
-        else:
-            ws = wb["Submissions"]
-    else:
-        wb = Workbook()
-        if "Sheet" in wb.sheetnames:
-            wb.remove(wb["Sheet"])
-        ws = wb.create_sheet("Submissions")
-        # Başlık satırı oluştur
-        headers = [
-            "Timestamp", "Driver Name", "Vehicle", "Odometer Start", 
-            "Fuel Level", "Oil Level", "Fuel Card", "Measuring Tape", 
-            "Safety Vest", "Fuel Amount"
-        ]
-        
-        # Exterior checks başlıkları
-        exterior_fields = load_check_fields("ExteriorChecks")
-        for field in exterior_fields:
-            headers.append(f"Exterior_{field}")
-        
-        # Engine checks başlıkları
-        engine_fields = load_check_fields("EngineChecks")
-        for field in engine_fields:
-            headers.append(f"Engine_{field}")
-        
-        # Safety equipment başlıkları
-        safety_fields = load_check_fields("SafetyEquipment")
-        for field in safety_fields:
-            headers.append(f"Safety_{field}")
-        
-        # Interior checks başlıkları
-        interior_fields = load_check_fields("InteriorChecks")
-        for field in interior_fields:
-            headers.append(f"Interior_{field}")
-        
-        ws.append(headers)
+    # Başlık satırı oluştur
+    headers = [
+        "Timestamp", "Driver Name", "Vehicle", "Odometer Start", 
+        "Fuel Level", "Oil Level", "Fuel Card", "Measuring Tape", 
+        "Safety Vest", "Fuel Amount"
+    ]
+    
+    # Exterior checks başlıkları
+    exterior_fields = load_check_fields("ExteriorChecks")
+    for field in exterior_fields:
+        headers.append(f"Exterior_{field}")
+    
+    # Engine checks başlıkları
+    engine_fields = load_check_fields("EngineChecks")
+    for field in engine_fields:
+        headers.append(f"Engine_{field}")
+    
+    # Safety equipment başlıkları
+    safety_fields = load_check_fields("SafetyEquipment")
+    for field in safety_fields:
+        headers.append(f"Safety_{field}")
+    
+    # Interior checks başlıkları
+    interior_fields = load_check_fields("InteriorChecks")
+    for field in interior_fields:
+        headers.append(f"Interior_{field}")
     
     # Veri satırı oluştur
     row = [
@@ -245,24 +336,247 @@ def save_form_submission(form_data):
     
     # Exterior checks değerleri
     exterior_checks = form_data.get("exterior_checks", {})
-    for field in load_check_fields("ExteriorChecks"):
+    for field in exterior_fields:
         row.append(exterior_checks.get(field, ""))
     
     # Engine checks değerleri
     engine_checks = form_data.get("engine_checks", {})
-    for field in load_check_fields("EngineChecks"):
+    for field in engine_fields:
         row.append(engine_checks.get(field, ""))
     
     # Safety equipment değerleri
     safety_checks = form_data.get("safety_checks", {})
-    for field in load_check_fields("SafetyEquipment"):
+    for field in safety_fields:
         row.append(safety_checks.get(field, ""))
     
     # Interior checks değerleri
     interior_checks = form_data.get("interior_checks", {})
-    for field in load_check_fields("InteriorChecks"):
+    for field in interior_fields:
         row.append(interior_checks.get(field, ""))
+    
+    return headers, row
+
+def save_form_submission_to_google_apps_script(form_data):
+    """Form verilerini Google Apps Script'e HTTP POST ile gönderir (eski yöntem)"""
+    import urllib.request
+    import urllib.parse
+    import json
+    
+    try:
+        # Form verilerini düzleştir (Google Apps Script formatına uygun)
+        flat_data = {}
+        
+        # Temel alanlar
+        flat_data["driver_name"] = form_data.get("driver_name", "")
+        flat_data["vehicle"] = form_data.get("vehicle", "")
+        flat_data["odometer_start"] = str(form_data.get("odometer_start", ""))
+        flat_data["fuel_level"] = form_data.get("fuel_level", "")
+        flat_data["oil_level"] = form_data.get("oil_level", "")
+        flat_data["fuel_card"] = form_data.get("fuel_card", "")
+        flat_data["measuring_tape"] = form_data.get("measuring_tape", "")
+        flat_data["safety_vest"] = form_data.get("safety_vest", "")
+        flat_data["fuel_amount"] = form_data.get("fuel_amount", "")
+        
+        # Exterior checks
+        exterior_checks = form_data.get("exterior_checks", {})
+        for field, value in exterior_checks.items():
+            flat_data[f"exterior_{field}"] = value
+        
+        # Engine checks
+        engine_checks = form_data.get("engine_checks", {})
+        for field, value in engine_checks.items():
+            flat_data[f"engine_{field}"] = value
+        
+        # Safety equipment
+        safety_checks = form_data.get("safety_checks", {})
+        for field, value in safety_checks.items():
+            flat_data[f"safety_{field}"] = value
+        
+        # Interior checks
+        interior_checks = form_data.get("interior_checks", {})
+        for field, value in interior_checks.items():
+            flat_data[f"interior_{field}"] = value
+        
+        # HTTP POST isteği gönder
+        data = urllib.parse.urlencode(flat_data).encode('utf-8')
+        req = urllib.request.Request(GOOGLE_APPS_SCRIPT_URL, data=data, method='POST')
+        
+        with urllib.request.urlopen(req, timeout=10) as response:
+            result = response.read().decode('utf-8')
+            # #region agent log
+            _log("F", "excel_handler.py:save_form_submission_to_google_apps_script", "Google Apps Script response", {"status_code": response.status, "result": result[:100]})
+            # #endregion agent log
+            return True
+    except Exception as e:
+        # #region agent log
+        _log("F", "excel_handler.py:save_form_submission_to_google_apps_script", "Google Apps Script error", {"error": str(e)})
+        # #endregion agent log
+        return False
+
+def save_form_submission(form_data):
+    """Form verilerini Excel dosyasına veya Google Sheets'e kaydeder"""
+    from datetime import datetime
+    from openpyxl import Workbook
+    
+    headers, row = _prepare_submission_row(form_data)
+    
+    # Google Apps Script kullanılıyorsa (eski yöntem - öncelikli)
+    if USE_GOOGLE_APPS_SCRIPT and GOOGLE_APPS_SCRIPT_URL:
+        success = save_form_submission_to_google_apps_script(form_data)
+        if success:
+            # #region agent log
+            _log("F", "excel_handler.py:save_form_submission", "Saved to Google Apps Script successfully", {})
+            # #endregion agent log
+            # Yerel Excel'e de kaydet (backup)
+            pass  # Fall through to Excel save
+    
+    # Google Sheets kullanılıyorsa (yeni yöntem)
+    if USE_GOOGLE_SHEETS:
+        client = get_google_sheets_client()
+        if client:
+            try:
+                sheet = client.open_by_key(GOOGLE_SHEET_ID).worksheet("Submissions")
+                # Başlık satırını kontrol et
+                existing_headers = sheet.row_values(1)
+                if not existing_headers or len(existing_headers) < len(headers):
+                    sheet.clear()
+                    sheet.append_row(headers)
+                # Yeni satır ekle
+                sheet.append_row(row)
+                return
+            except Exception as e:
+                # #region agent log
+                _log("E", "excel_handler.py:save_form_submission:google_sheets", "Google Sheets save failed, falling back to Excel", {"error": str(e)})
+                # #endregion agent log
+                pass  # Fallback to Excel
+    
+    # Excel dosyasına kaydet (fallback veya varsayılan)
+    if os.path.exists(SUBMISSIONS_FILE):
+        wb = load_workbook(SUBMISSIONS_FILE)
+        if "Submissions" not in wb.sheetnames:
+            ws = wb.create_sheet("Submissions")
+            ws.append(headers)
+        else:
+            ws = wb["Submissions"]
+    else:
+        wb = Workbook()
+        if "Sheet" in wb.sheetnames:
+            wb.remove(wb["Sheet"])
+        ws = wb.create_sheet("Submissions")
+        ws.append(headers)
     
     ws.append(row)
     wb.save(SUBMISSIONS_FILE)
+
+def load_form_submissions():
+    """Form gönderimlerini Excel'den veya Google Sheets'ten okur"""
+    # Google Sheets kullanılıyorsa
+    if USE_GOOGLE_SHEETS:
+        client = get_google_sheets_client()
+        if client:
+            try:
+                sheet = client.open_by_key(GOOGLE_SHEET_ID).worksheet("Submissions")
+                all_values = sheet.get_all_values()
+                
+                if not all_values or len(all_values) < 2:
+                    return []
+                
+                headers = all_values[0]
+                submissions = []
+                
+                for row in all_values[1:]:
+                    if row and row[0]:  # Timestamp varsa
+                        submission = {}
+                        for i, header in enumerate(headers):
+                            submission[header] = row[i] if i < len(row) else None
+                        submissions.append(submission)
+                
+                return submissions
+            except Exception as e:
+                # #region agent log
+                _log("E", "excel_handler.py:load_form_submissions:google_sheets", "Google Sheets load failed, falling back to Excel", {"error": str(e)})
+                # #endregion agent log
+                pass  # Fallback to Excel
+    
+    # Excel dosyasından oku (fallback veya varsayılan)
+    if not os.path.exists(SUBMISSIONS_FILE):
+        return []
+    
+    wb = load_workbook(SUBMISSIONS_FILE)
+    if "Submissions" not in wb.sheetnames:
+        return []
+    
+    ws = wb["Submissions"]
+    submissions = []
+    
+    # Başlık satırını oku
+    headers = []
+    for cell in ws[1]:
+        headers.append(cell.value)
+    
+    # Veri satırlarını oku
+    for row in ws.iter_rows(min_row=2, values_only=True):
+        if row[0]:  # Timestamp varsa
+            submission = {}
+            for i, header in enumerate(headers):
+                submission[header] = row[i] if i < len(row) else None
+            submissions.append(submission)
+    
+    return submissions
+
+def is_admin(username):
+    """Kullanıcının admin olup olmadığını kontrol eder"""
+    # #region agent log
+    _log("B", "excel_handler.py:is_admin:entry", "is_admin called", {"username": username})
+    # #endregion agent log
+    wb = get_excel_file()
+    ws = wb["Users"]
+    
+    # Users sheet'inde admin kolonu var mı kontrol et
+    headers = [cell.value for cell in ws[1]]
+    # #region agent log
+    _log("B", "excel_handler.py:is_admin:headers", "Users sheet headers", {"headers": headers, "has_admin": "Admin" in headers})
+    # #endregion agent log
+    admin_col_idx = None
+    
+    if "Admin" in headers:
+        admin_col_idx = headers.index("Admin")
+        # #region agent log
+        _log("B", "excel_handler.py:is_admin:admin_col_found", "Admin column found", {"admin_col_idx": admin_col_idx})
+        # #endregion agent log
+    elif len(headers) > 3:  # Username, Password, Full Name'den sonra Admin kolonu olabilir
+        admin_col_idx = 3
+        # #region agent log
+        _log("B", "excel_handler.py:is_admin:admin_col_assumed", "Assuming admin column at index 3", {"admin_col_idx": admin_col_idx})
+        # #endregion agent log
+    
+    # Kullanıcıyı bul
+    user_found = False
+    for row in ws.iter_rows(min_row=2, values_only=True):
+        # #region agent log
+        _log("B", "excel_handler.py:is_admin:checking_row", "Checking row", {"row_username": row[0] if row else None, "matches": row[0] == username if row else False})
+        # #endregion agent log
+        if row[0] == username:
+            user_found = True
+            # #region agent log
+            _log("B", "excel_handler.py:is_admin:user_found", "User found in sheet", {"username": username, "row_length": len(row), "admin_col_idx": admin_col_idx})
+            # #endregion agent log
+            if admin_col_idx and len(row) > admin_col_idx:
+                admin_value = row[admin_col_idx]
+                is_admin_result = admin_value == "Yes" or admin_value == True
+                # #region agent log
+                _log("B", "excel_handler.py:is_admin:admin_check", "Admin value check", {"admin_value": admin_value, "is_admin": is_admin_result})
+                # #endregion agent log
+                return is_admin_result
+            # Admin kolonu yoksa, username'e göre kontrol et
+            if username == "admin":
+                # #region agent log
+                _log("B", "excel_handler.py:is_admin:fallback", "Using fallback admin check", {"username": username, "is_admin": True})
+                # #endregion agent log
+                return True
+    
+    # #region agent log
+    _log("B", "excel_handler.py:is_admin:user_not_found", "User not found or not admin", {"username": username, "user_found": user_found})
+    # #endregion agent log
+    return False
 
